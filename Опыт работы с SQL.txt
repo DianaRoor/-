@@ -1,0 +1,129 @@
+--Задание 1. Выведите название самолетов, которые имеют менее 50 посадочных мест?
+
+SELECT DISTINCT a.model
+FROM aircrafts a
+JOIN seats s ON s.aircraft_code = a.aircraft_code
+GROUP BY a.model
+HAVING COUNT(s.seat_no) < 50
+
+--Задание 2. Выведите процентное изменение ежемесячной суммы бронирования билетов, округленной до сотых.
+
+WITH monthly_booking_sum AS (
+    select  
+    EXTRACT(YEAR FROM book_date) AS year,
+    EXTRACT(MONTH FROM book_date) AS month,
+    SUM(total_amount) AS monthly_amount
+    from bookings
+    group BY year,month 
+),
+monthly_change AS (
+    select  year,month,monthly_amount,
+    LAG(monthly_amount) OVER (ORDER BY month) AS previous_month,
+    ROUND(((monthly_amount - LAG(monthly_amount) OVER (ORDER BY month))::numeric / LAG(monthly_amount) OVER (ORDER BY month)) * 100, 2) AS percent_change
+    from monthly_booking_sum
+)
+SELECT year,month,percent_change
+from monthly_change
+ORDER BY year, month
+
+
+--3. Выведите названия самолетов не имеющих бизнес - класс. Решение должно быть через функцию array_agg.
+
+SELECT a.model
+FROM aircrafts a
+JOIN seats s ON s.aircraft_code = a.aircraft_code
+GROUP BY a.model
+HAVING NOT 'Business' = ANY(array_agg(fare_conditions))
+ 
+
+
+--Задание 4. Найдите процентное соотношение перелетов по маршрутам от общего количества перелетов.
+ --Выведите в результат названия аэропортов и процентное отношение.
+ --Решение должно быть через оконную функцию.
+
+WITH flights_route_1 AS (
+    SELECT
+    departure_airport,
+    COUNT(*) OVER (PARTITION BY departure_airport) AS route_flights,
+    count(*) OVER () AS total_flights
+    FROM
+        flights
+)
+select
+    a.airport_name,
+    round((route_flights::numeric / total_flights::numeric) * 100, 2) AS percentage_ratio
+FROM
+    flights_route_1 f
+    JOIN airports a ON a.airport_code = f.departure_airport
+group  BY
+    a.airport_name, route_flights, total_flights
+order by a.airport_name
+
+-- Задание 5. Выведите количество пассажиров по каждому коду сотового оператора, если учесть, что код оператора -
+-- это три символа после +7
+
+WITH p_numbers AS (
+    SELECT SUBSTRING((contact_data ->> 'phone') FROM 3 FOR 3) AS operator_code, passenger_id
+    FROM tickets
+)
+SELECT distinct operator_code, COUNT(passenger_id)
+FROM p_numbers
+GROUP BY operator_code
+
+--Задание 6. Классифицируйте финансовые обороты (сумма стоимости перелетов) по маршрутам:
+ --До 50 млн - low
+ --От 50 млн включительно до 150 млн - middle
+ --От 150 млн включительно - high
+ --Выведите в результат количество маршрутов в каждом полученном классе
+
+SELECT classification, COUNT(flight_no) as "Количество маршрутов"
+FROM (
+    SELECT f.flight_no, 
+           SUM(t.amount) as total_amount,
+           CASE
+               WHEN SUM(t.amount) < 50000000 THEN 'low'
+               WHEN SUM(t.amount) >= 50000000 AND SUM(t.amount) <= 150000000 THEN 'middle'
+               WHEN SUM(t.amount) >= 150000000  THEN 'high'
+           END AS classification
+    FROM ticket_flights t
+    JOIN flights f ON f.flight_id = t.flight_id
+    GROUP BY f.flight_no
+) AS classified_routes
+GROUP BY classification  
+
+--Задание 7. Вычислите медиану стоимости перелетов, медиану размера бронирования и отношение медианы бронирования к 
+--медиане стоимости перелетов, округленной до сотых
+
+WITH median AS (
+    select PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount) AS median_flight
+    from ticket_flights),
+       median_booking as(
+          select PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_amount) AS median_booking
+             FROM bookings
+)
+SELECT
+    ROUND(median_flight::numeric, 2) AS median_flight,
+    ROUND(median_booking::numeric, 2) AS median_booking,
+    ROUND((median_booking::numeric / median_flight::numeric), 2) AS percentage_ratio
+FROM  median, median_booking
+
+--Задание 8. Найдите значение минимальной стоимости полета 1 км для пассажиров. То есть нужно найти расстояние между аэропортами и с учетом стоимости перелетов получить искомый результат
+  --Для поиска расстояния между двумя точками на поверхности Земли используется модуль earthdistance.
+  --Для работы модуля earthdistance необходимо предварительно установить модуль cube.
+  --Установка модулей происходит через команду: create extension название_модуля.
+
+SELECT departure_airport, arrival_airport,
+       (earth_distance(ll_to_earth(dep_lat, dep_lot), ll_to_earth(arr_lat, arr_lot)) / 1000) AS distance,
+       amount / (earth_distance(ll_to_earth(dep_lat, dep_lot), ll_to_earth(arr_lat, arr_lot)) / 1000) AS "Минимальная стоимости полета 1 км"
+FROM
+    (SELECT f.departure_airport, f.arrival_airport, a1.longitude AS dep_lot, a1.latitude AS dep_lat, a2.longitude AS arr_lot,
+        a2.latitude AS arr_lat, tf.amount, f.flight_id
+    FROM flights f
+    JOIN airports a1 ON a1.airport_code = f.departure_airport
+    JOIN airports a2 ON a2.airport_code = f.arrival_airport
+    JOIN ticket_flights tf ON tf.flight_id = f.flight_id) AS subquery
+ORDER BY 
+    "Минимальная стоимости полета 1 км"
+LIMIT 1
+
+
