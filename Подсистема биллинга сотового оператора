@@ -1,0 +1,316 @@
+--Задача реализовать подсистему биллинга сотового оператора. Реализовывать надо только часть на стороне БД.
+--Клиентами этой БД будут: АРМ менеджера, телефонная станция, мобильное приложение клиента.
+--Клиенты будут подключаться к БД напрямую, но надо реализовать подход, 
+--чтобы клиенты не имели доступа до таблиц БД. Все взаимодействие будет выполняться через представления и функции/хранимые процедуры.
+--Клиенты будут выполнять следующие функции.
+
+--АРМ менеджера:
+-- работа со справочником тарифов;
+-- создание абонента;
+-- пополнение баланса абонента.
+
+--Телефонная станция
+-- запрос доступного к-ва минут;
+-- списание за совершенный звонок.
+
+--Мобильное приложение
+-- просмотр истории списаний/зачислений денежных средств;
+-- перевод денег другому абоненту.
+
+SET search_path TO operator;
+
+-- Создание таблицы "Тариф"
+CREATE TABLE tariffs (
+    id_tariffs INT PRIMARY KEY, -- уникальный идентификатор
+    tariff_name VARCHAR(100) NOT NULL UNIQUE, -- название тарифа
+    total_minutes DECIMAL (10,2) NOT NULL, -- всего минут в тарифе
+    minute_tariffs DECIMAL(10, 2) NOT NULL -- стоимость одной минуты в тарифе
+);
+
+-- Создание таблицы "Абонент"
+CREATE TABLE subscriber (
+   id_subscriber INT PRIMARY KEY, -- уникальный идентификатор
+   name_subscriber VARCHAR(100) NOT NULL UNIQUE, -- имя абонента
+   phone_number VARCHAR(15) NOT NULL UNIQUE, -- номер телефона
+   tariff INT NOT NULL, -- тариф
+   balance DECIMAL (10,2) NOT NULL, -- баланс
+   FOREIGN KEY (tariff) REFERENCES tariffs(id_tariffs)
+);
+
+-- Создание таблицы "Транзакции"
+CREATE TABLE operations (
+    id_operations INT PRIMARY KEY, -- уникальный идентификатор
+    subscriber_id INT NOT NULL, 
+    operation_type VARCHAR(50) NOT NULL, -- тип операции (пополнение, списание, перевод)
+    amouth DECIMAL (10,2) NOT NULL, -- сумма операции
+    FOREIGN KEY (subscriber_id) REFERENCES subscriber(id_subscriber) -- ссылка на абонент
+);
+
+-- Создание таблицы "Звонки"
+CREATE TABLE calls (
+    id_calls INT PRIMARY KEY, -- уникальный идентификатор
+    subscriber_id INT NOT NULL, -- ссылка на абонента
+    duration_call INT NOT NULL, -- длительность вызова (в минутах)
+    call_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- дата и время звонка
+    FOREIGN KEY (subscriber_id) REFERENCES subscriber(id_subscriber) -- ссылка на абонента
+);
+   
+  -- Вставка данных в таблицу "Тарифы"
+INSERT INTO tariffs (id_tariffs, tariff_name, total_minutes, minute_tariffs)
+VALUES
+    (1, 'Базовый', 100, 1.00),
+    (2, 'Лайт', 300, 0.70),
+    (3, 'Премиум', 600, 0.50);
+    
+-- Вставка данных в таблицу "Абонент"
+INSERT INTO subscriber (id_subscriber, name_subscriber, phone_number, tariff, balance)
+VALUES
+    (1, 'Иванов Олег Дмитриевич', '+79111234894', 1, 100.00),
+    (2, 'Петров Андрей Александрович', '+79819325465', 2, 70.00),
+    (3, 'Еремин Максим Сергеевич', '+79059322211', 1, 150.00);  
+
+-- Вставка данных в таблицу "Транзакции"
+INSERT INTO operations (id_operations, subscriber_id, operation_type, amouth)  
+VALUES
+    (1, 1, 'Пополнение', 60.00),
+    (2, 2, 'Списание', 20.00),
+    (3, 3, 'Перевод', 30.00); 
+   
+-- Вставка данных в таблицу "Звонки"
+INSERT INTO calls (id_calls,subscriber_id, duration_call, call_date)
+VALUES
+    (1, 1, 10, '2024-07-29 10:00:00'),
+    (2, 2, 5, '2024-07-29 11:25:00'),
+    (3, 3, 20, '2024-07-29 15:15:00');
+
+  -- Создаем представления для тарифов:
+CREATE VIEW v_tariffs AS
+    SELECT id_tariffs, tariff_name, total_minutes, minute_tariffs
+    FROM tariffs
+    
+   -- Создаем представления для абонентов:
+CREATE VIEW v_subscriber AS
+    SELECT id_subscriber, name_subscriber, phone_number, tariff, balance
+    FROM subscriber
+    
+-- Создаем представления для транзакций:
+CREATE VIEW v_operations AS
+    SELECT id_operations, subscriber_id, operation_type, amouth
+    FROM operations
+    
+-- Создаем представления для звонков:
+CREATE VIEW v_calls AS
+    SELECT id_calls, subscriber_id, duration_call, call_date
+    FROM calls
+       
+
+ -- АРМ менеджера:
+  
+ --РАБОТА СО СПРАВОЧНИКОМ ТАРИФОВ: 
+ 
+ --Внесение изменений (возможность вносить изменения во все поля таблицы)
+ 
+CREATE OR REPLACE PROCEDURE tariff_guide(
+    p_id_tariffs INT,
+    p_tariff_name VARCHAR,
+    p_total_minutes DECIMAL,
+    p_minute_tariffs DECIMAL
+) 
+LANGUAGE plpgsql AS $$
+BEGIN 
+    UPDATE tariffs 
+    SET 
+        tariff_name = CASE WHEN p_tariff_name IS NOT NULL THEN p_tariff_name ELSE tariff_name END,
+        total_minutes = CASE WHEN p_total_minutes IS NOT NULL THEN p_total_minutes ELSE total_minutes END,
+        minute_tariffs = CASE WHEN p_minute_tariffs IS NOT NULL THEN p_minute_tariffs ELSE minute_tariffs END
+    WHERE 
+        id_tariffs = p_id_tariffs;
+END;
+$$
+
+-- Создание нового тарифа
+CREATE OR REPLACE PROCEDURE tariff_new(
+    p_id_tariffs INT,
+    p_tariff_name VARCHAR,
+    p_total_minutes DECIMAL,
+    p_minute_tariffs DECIMAL
+) 
+AS 
+BEGIN 
+    INSERT INTO tariffs (id_tariffs, tariff_name, total_minutes, minute_tariffs) 
+    VALUES (p_id_tariffs, p_tariff_name, p_total_minutes, p_minute_tariffs);
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Обработка ошибок
+        RAISE_APPLICATION_ERROR(-20001, SQLERRM);
+END;
+
+--  Удаление тарифа:
+
+  CREATE OR REPLACE PROCEDURE tariff_delete(
+      p_id_tariffs INT
+  )  
+  AS 
+  BEGIN 
+      DELETE FROM tariffs 
+      WHERE id_tariffs = p_id_tariffs;
+  exception --обработка ошибок
+      WHEN OTHERS THEN
+          RAISE_APPLICATION_ERROR(-20002, 'Ошибка при удалении тарифа: ' SQLERRM);
+  END;
+
+
+-- Создание нового абонента:
+
+CREATE OR REPLACE PROCEDURE subscriber_new(
+    p_id_subscriber INT,
+    p_name_subscriber VARCHAR,
+    p_phone_number VARCHAR,
+    p_tariff INT,
+    p_balance DECIMAL
+) 
+AS 
+BEGIN 
+    INSERT INTO subscriber (id_subscriber, name_subscriber, phone_number, tariff, balance) 
+    VALUES (p_id_subscriber, p_name_subscriber, p_phone_number, p_tariff, p_balance);
+end;
+
+
+-- ПОПОЛНЕНИЕ БАЛАНСА АБОНЕНТА:
+ 
+CREATE OR REPLACE PROCEDURE replenishment_balance(
+    p_id_subscriber INT,
+    p_amouth DECIMAL
+) 
+AS 
+BEGIN 
+    -- Обновление баланса
+    UPDATE subscriber  
+    SET balance = balance + p_amouth
+    WHERE id_subscriber = p_id_subscriber;
+
+    -- Внесение записи в таблицу операций
+    INSERT INTO operations(id_operations, subscriber_id, operation_type, amouth) 
+    VALUES (
+        (SELECT COALESCE(MAX(id_operations), 0) + 1 FROM operations),  
+        p_id_subscriber, 
+        'Пополнение', 
+        p_amouth
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Ошибка при пополнении баланса: ' || SQLERRM);
+END;
+
+--ТЕЛЕФОННАЯ СТАНЦИЯ
+-- Запрос доступного к-ва минут
+
+CREATE OR REPLACE FUNCTION requesting_number_minutes(id_subscriber INT)
+  RETURNS INT AS $$
+  DECLARE
+      number_minutes INT; 
+      total_minutes INT;
+  BEGIN
+      SELECT total_minutes INTO total_minutes 
+      FROM tariffs
+      WHERE id_tariffs = (SELECT tariff FROM subscriber WHERE id_subscriber = id_subscriber);
+      SELECT SUM(duration_call) INTO number_minutes 
+      FROM calls
+      WHERE subscriber_id = id_subscriber; 
+      RETURN total_minutes - number_minutes; 
+  END;
+  $$ LANGUAGE plpgsql;
+
+--Тест функции 
+SELECT requesting_number_minutes(1)
+
+
+-- Списание за совершенный звонок.(Получаем стоимость минуты из тарифа, проверяем баланс, проверяем хватает ли денег для списания
+--обновляем, вставляем записб в таблицу)
+
+CREATE OR REPLACE FUNCTION charge_for_call(id_subscriber INT, duration_call INT)
+  RETURNS VOID AS $$
+  DECLARE
+      charge_call DECIMAL;
+      balance_before DECIMAL;
+  BEGIN
+      SELECT minute_tariffs INTO charge_call 
+      FROM tariffs 
+      WHERE id_tariffs = (SELECT tariff FROM subscriber WHERE id_subscriber = id_subscriber);
+
+      SELECT balance INTO balance_before FROM subscriber WHERE id_subscriber = id_subscriber;
+
+      if balance_before >= (duration_call * charge_call) THEN
+          UPDATE subscriber
+          SET balance = balance - (duration_call * charge_call)
+          WHERE id_subscriber = id_subscriber;
+
+          INSERT INTO operations (subscriber_id, operation_type, amount)
+          VALUES (id_subscriber, 'call', (duration_call * charge_call));
+      ELSE
+          RAISE NOTICE 'Недостаточно средств на балансе.';
+          RETURN;
+      END IF;
+  END;
+  $$ LANGUAGE plpgsql;
+
+--Тест функции
+
+SELECT * FROM operations WHERE subscriber_id = 1
+
+--МОБИЛЬНОЕ ПРИЛОЖЕНИЕ
+-- Просмотр истории списаний/зачислений денежных средств
+
+CREATE OR REPLACE FUNCTION operation_history(id_subscriber INT)
+RETURNS TABLE (id_operations INT, subscriber_id INT, operation_type VARCHAR, amouth DECIMAL, call_date TIMESTAMP) 
+AS $$
+BEGIN 
+  RETURN QUERY
+  SELECT o.id_operations, o.subscriber_id, o.operation_type, o.amouth, c.call_date
+  FROM operations o
+  LEFT JOIN calls c ON o.subscriber_id = c.subscriber_id
+  WHERE o.subscriber_id = id_subscriber;
+END;
+$$ LANGUAGE plpgsql;
+
+--Тестирование функции
+SELECT * FROM operation_history(1)
+
+
+-- Перевод денег другому абоненту.
+--Обновляем баланс абонента-отправителя уменьшая его, обновляем баланс получателя, увеличивая его.
+
+CREATE OR REPLACE FUNCTION transfer_money(sender_id INT, receiver_id INT, amount DECIMAL)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE subscriber
+    SET balance = balance - amount
+    WHERE id_subscriber = sender_id;
+    UPDATE subscriber
+    SET balance = balance + amount
+    WHERE id_subscriber = receiver_id;
+    INSERT INTO operations (subscriber_id, operation_type, amouth) --добавляем запись об переводе
+    VALUES (sender_id, 'Перевод', amount);
+    INSERT INTO operations (subscriber_id, operation_type, amouth) -- добавляем запись увеличивая сумму
+    VALUES (receiver_id, 'Перевод', amount);
+END;
+$$ LANGUAGE plpgsql;
+
+--Тестируем функцию
+SELECT transfer_money(1, 2, 50)
+
+-- Создание ролей, для предоставления прав доступа
+CREATE ROLE manager;
+CREATE ROLE telephone_station;
+CREATE ROLE mobile_app;
+--АРМ менеджера:
+-- работа со справочником тарифов;(Добавление, удаление, создание нового тарифа)
+GRANT SELECT, INSERT, update,delete on tariffs TO manager;
+GRANT INSERT ON subscriber TO manager; --создание нового абонента
+GRANT update on subscriber TO manager; -- пополнение баланса абонента
+--Телефонная станция
+GRANT SELECT ON subscriber TO telephone_station; --запрос доступного количества минут
+GRANT INSERT ON calls TO telephone_station; --списание за совершенный звонок
+--Мобильное приложение
+GRANT SELECT ON operations TO mobile_app;-- просмотр истории списаний/зачислений денежных средств
+GRANT INSERT ON operations TO mobile_app;-- перевод денег другому абоненту
